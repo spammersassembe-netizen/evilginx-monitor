@@ -89,7 +89,7 @@ func main() {
 
     fmt.Println("🔥 Evilginx Monitor Started")
     fmt.Println("Watching:", dbPath)
-    fmt.Println("----------------------------------------")
+    fmt.Println("yrn----------------------------------------")
 
     // Track sent messages per log ID
     sentMessages := make(map[int]string)
